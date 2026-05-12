@@ -28,6 +28,7 @@ import torch.multiprocessing as mp
 import torch.nn as nn
 import torch.optim as optim
 import torch.utils.checkpoint as checkpoint
+from cs336_systems.ddp_flattened_parameters import DDPFlattenedParameters
 from cs336_systems.ddp_individual_parameters import DDPIndividualParameters
 
 try:
@@ -164,6 +165,7 @@ def benchmark_ddp_training(
     warmup_steps: int = 5,
     batch_size: int = DEFAULT_BATCH_SIZE,
     context_length: int = DEFAULT_CONTEXT_LENGTH,
+    ddp_impl: str = "individual",
     amp_dtype: str = "float32",
     activation_checkpointing: bool = False,
     results_file: str = "ddp_benchmark_results.json",
@@ -194,8 +196,13 @@ def benchmark_ddp_training(
             target_dtype = torch.bfloat16 if amp_dtype == "bfloat16" else torch.float16
             model = model.to(dtype=target_dtype)
         
-        # Wrap with naive DDP
-        ddp_model = DDPIndividualParameters(model)
+        # Wrap with selected DDP implementation.
+        if ddp_impl == "individual":
+            ddp_model = DDPIndividualParameters(model)
+        elif ddp_impl == "flattened":
+            ddp_model = DDPFlattenedParameters(model)
+        else:
+            raise ValueError(f"Unsupported ddp_impl: {ddp_impl}")
         
         # Optimizer
         optimizer = optim.SGD(ddp_model.parameters(), lr=0.01)
@@ -212,6 +219,7 @@ def benchmark_ddp_training(
             logger.info(f"Benchmarking {model_size.upper()} model on {world_size} GPUs")
             logger.info(f"Model config: {config}")
             logger.info(f"Batch size: {batch_size}, Context length: {context_length}")
+            logger.info(f"DDP implementation: {ddp_impl}")
             logger.info(f"AMP dtype: {amp_dtype}")
             logger.info(f"Activation checkpointing: {activation_checkpointing}")
             logger.info(f"Warmup steps: {warmup_steps}, Benchmark steps: {num_steps}")
@@ -289,6 +297,7 @@ def benchmark_ddp_training(
             # Compute statistics
             results = {
                 "model_size": model_size,
+                "ddp_impl": ddp_impl,
                 "num_gpus": world_size,
                 "batch_size": batch_size,
                 "context_length": context_length,
@@ -329,6 +338,7 @@ def benchmark_ddp_training(
             logger.info("BENCHMARKING RESULTS")
             logger.info("="*70)
             logger.info(f"Model: {model_size.upper()}")
+            logger.info(f"DDP Impl: {ddp_impl}")
             logger.info(f"World Size: {world_size} GPUs")
             logger.info(f"Batch Size: {batch_size}")
             logger.info(f"Context Length: {context_length}")
@@ -429,6 +439,13 @@ def main():
         help="Alias for --context-length to match other benchmark scripts",
     )
     parser.add_argument(
+        "--ddp-impl",
+        type=str,
+        choices=["individual", "flattened"],
+        default="individual",
+        help="Gradient communication strategy: per-parameter or single flattened all-reduce.",
+    )
+    parser.add_argument(
         "--amp-dtype",
         type=str,
         choices=["float32", "bfloat16", "float16"],
@@ -469,6 +486,7 @@ def main():
             warmup_steps,
             args.batch_size,
             context_length,
+            args.ddp_impl,
             args.amp_dtype,
             args.activation_checkpointing,
             args.output,
