@@ -163,7 +163,7 @@ def main() -> None:
 
     seq_lens = [2**p for p in range(7, 17) if 2**p <= args.max_seq_len]
     d_models = [16, 32, 64, 128]
-    dtypes = [torch.bfloat16, torch.float32]
+    dtypes = [torch.float32]
 
     results: list[BenchResult] = []
 
