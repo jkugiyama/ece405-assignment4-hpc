@@ -18,6 +18,7 @@ import os
 import statistics
 import sys
 import time
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -128,6 +129,7 @@ def benchmark_ddp_training(
     warmup_steps: int = 5,
     batch_size: int = DEFAULT_BATCH_SIZE,
     context_length: int = DEFAULT_CONTEXT_LENGTH,
+    amp_dtype: str = "float32",
     results_file: str = "ddp_benchmark_results.json",
 ):
     """
@@ -146,6 +148,10 @@ def benchmark_ddp_training(
         # Create model
         config = MODEL_CONFIGS[model_size]
         model = create_model(config, context_length=context_length, device=device)
+
+        if amp_dtype in {"bfloat16", "float16"} and device.startswith("cuda"):
+            target_dtype = torch.bfloat16 if amp_dtype == "bfloat16" else torch.float16
+            model = model.to(dtype=target_dtype)
         
         # Wrap with naive DDP
         ddp_model = DDPIndividualParameters(model)
@@ -165,6 +171,7 @@ def benchmark_ddp_training(
             logger.info(f"Benchmarking {model_size.upper()} model on {world_size} GPUs")
             logger.info(f"Model config: {config}")
             logger.info(f"Batch size: {batch_size}, Context length: {context_length}")
+            logger.info(f"AMP dtype: {amp_dtype}")
             logger.info(f"Warmup steps: {warmup_steps}, Benchmark steps: {num_steps}")
         
         # Training loop
@@ -180,8 +187,17 @@ def benchmark_ddp_training(
                 torch.cuda.synchronize()
             compute_start = time.perf_counter()
             
-            logits = ddp_model(inputs)
-            loss = cross_entropy(logits, targets)
+            use_amp = amp_dtype in {"bfloat16", "float16"} and device.startswith("cuda")
+            autocast_dtype = torch.bfloat16 if amp_dtype == "bfloat16" else torch.float16
+            amp_ctx = (
+                torch.autocast(device_type="cuda", dtype=autocast_dtype)
+                if use_amp
+                else nullcontext()
+            )
+
+            with amp_ctx:
+                logits = ddp_model(inputs)
+                loss = cross_entropy(logits, targets)
             
             # Backward pass - communication happens here asynchronously
             loss.backward()
@@ -234,6 +250,7 @@ def benchmark_ddp_training(
                 "num_gpus": world_size,
                 "batch_size": batch_size,
                 "context_length": context_length,
+                "amp_dtype": amp_dtype,
                 "model_config": config,
                 "num_benchmark_steps": num_steps,
                 "warmup_steps": warmup_steps,
@@ -369,6 +386,13 @@ def main():
         help="Alias for --context-length to match other benchmark scripts",
     )
     parser.add_argument(
+        "--amp-dtype",
+        type=str,
+        choices=["float32", "bfloat16", "float16"],
+        default="float32",
+        help="Compute/model dtype. Use bfloat16 or float16 to reduce memory usage.",
+    )
+    parser.add_argument(
         "--output",
         type=str,
         default="benchmark_results/ddp_benchmark_results.json",
@@ -397,6 +421,7 @@ def main():
             warmup_steps,
             args.batch_size,
             context_length,
+            args.amp_dtype,
             args.output,
         ),
         nprocs=args.world_size,
