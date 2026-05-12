@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import statistics
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -25,10 +26,18 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 import torch.nn as nn
 import torch.optim as optim
-
-from cs336_basics.model import BasicsTransformerLM
-from cs336_basics.nn_utils import cross_entropy
 from cs336_systems.ddp_individual_parameters import DDPIndividualParameters
+
+try:
+    from cs336_basics.model import BasicsTransformerLM
+    from cs336_basics.nn_utils import cross_entropy
+except ModuleNotFoundError:
+    repo_root = Path(__file__).resolve().parent.parent
+    basics_src = repo_root / "cs336-basics"
+    if basics_src.exists():
+        sys.path.insert(0, str(basics_src))
+    from cs336_basics.model import BasicsTransformerLM
+    from cs336_basics.nn_utils import cross_entropy
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
