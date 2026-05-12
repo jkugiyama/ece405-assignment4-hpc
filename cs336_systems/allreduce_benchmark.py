@@ -88,8 +88,8 @@ def _setup_distributed(rank: int, world_size: int, backend: str, timeout_seconds
     dist.init_process_group(
         backend=backend,
         rank=rank,
-        world_siz
-        timeout=torch.distributed.timedelta(seconds=timeout_seconds),
+        world_size=world_size,
+        timeout=timedelta(seconds=timeout_seconds),
     )
 
     return device
