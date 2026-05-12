@@ -1,0 +1,134 @@
+[
+  {
+    "backend": "gloo",
+    "device_type": "cpu",
+    "data_size_mb": 1,
+    "world_size": 2,
+    "rank": 1,
+    "min_ms": 0.5340576171875,
+    "max_ms": 0.9360313415527344,
+    "mean_ms": 0.7486343383789062,
+    "stdev_ms": 0.13940300770257388
+  },
+  {
+    "backend": "gloo",
+    "device_type": "cpu",
+    "data_size_mb": 1,
+    "world_size": 4,
+    "rank": 3,
+    "min_ms": 0.759124755859375,
+    "max_ms": 2.475738525390625,
+    "mean_ms": 1.4486312866210938,
+    "stdev_ms": 0.7606408224878007
+  },
+  {
+    "backend": "gloo",
+    "device_type": "cpu",
+    "data_size_mb": 1,
+    "world_size": 6,
+    "rank": 5,
+    "min_ms": 1.5270709991455078,
+    "max_ms": 2.231121063232422,
+    "mean_ms": 1.686692237854004,
+    "stdev_ms": 0.20097802381438512
+  },
+  {
+    "backend": "gloo",
+    "device_type": "cpu",
+    "data_size_mb": 10,
+    "world_size": 2,
+    "rank": 1,
+    "min_ms": 2.245187759399414,
+    "max_ms": 2.4700164794921875,
+    "mean_ms": 2.34224796295166,
+    "stdev_ms": 0.06628812600398405
+  },
+  {
+    "backend": "gloo",
+    "device_type": "cpu",
+    "data_size_mb": 10,
+    "world_size": 4,
+    "rank": 3,
+    "min_ms": 4.578113555908203,
+    "max_ms": 5.558013916015625,
+    "mean_ms": 4.95905876159668,
+    "stdev_ms": 0.3139425984173434
+  },
+  {
+    "backend": "gloo",
+    "device_type": "cpu",
+    "data_size_mb": 10,
+    "world_size": 6,
+    "rank": 4,
+    "min_ms": 7.254123687744141,
+    "max_ms": 7.954835891723633,
+    "mean_ms": 7.576346397399902,
+    "stdev_ms": 0.20407018722891332
+  },
+  {
+    "backend": "gloo",
+    "device_type": "cpu",
+    "data_size_mb": 100,
+    "world_size": 2,
+    "rank": 1,
+    "min_ms": 22.56608009338379,
+    "max_ms": 23.46324920654297,
+    "mean_ms": 23.012304306030273,
+    "stdev_ms": 0.27252364624600517
+  },
+  {
+    "backend": "gloo",
+    "device_type": "cpu",
+    "data_size_mb": 100,
+    "world_size": 4,
+    "rank": 2,
+    "min_ms": 47.80292510986328,
+    "max_ms": 49.46279525756836,
+    "mean_ms": 48.325133323669434,
+    "stdev_ms": 0.45666023621472046
+  },
+  {
+    "backend": "gloo",
+    "device_type": "cpu",
+    "data_size_mb": 100,
+    "world_size": 6,
+    "rank": 5,
+    "min_ms": 76.64704322814941,
+    "max_ms": 82.57794380187988,
+    "mean_ms": 78.05840969085693,
+    "stdev_ms": 2.1175907364470503
+  },
+  {
+    "backend": "gloo",
+    "device_type": "cpu",
+    "data_size_mb": 1024,
+    "world_size": 2,
+    "rank": 1,
+    "min_ms": 226.5491485595703,
+    "max_ms": 250.27012825012207,
+    "mean_ms": 241.7818784713745,
+    "stdev_ms": 8.894826788906025
+  },
+  {
+    "backend": "gloo",
+    "device_type": "cpu",
+    "data_size_mb": 1024,
+    "world_size": 4,
+    "rank": 0,
+    "min_ms": 493.9541816711426,
+    "max_ms": 516.0140991210938,
+    "mean_ms": 507.7258825302124,
+    "stdev_ms": 7.470446884251407
+  },
+  {
+    "backend": "gloo",
+    "device_type": "cpu",
+    "data_size_mb": 1024,
+    "world_size": 6,
+    "rank": 0,
+    "min_ms": 795.7592010498047,
+    "max_ms": 843.7659740447998,
+    "mean_ms": 817.717695236206,
+    "stdev_ms": 16.475528889362497
+  }
+]
