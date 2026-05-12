@@ -47,6 +47,24 @@ logging.basicConfig(level=logging.INFO)
 
 # Model configuration from benchmark.py
 MODEL_CONFIGS = {
+    "small": {
+        "d_model": 768,
+        "d_ff": 3072,
+        "num_layers": 12,
+        "num_heads": 12,
+    },
+    "medium": {
+        "d_model": 1024,
+        "d_ff": 4096,
+        "num_layers": 24,
+        "num_heads": 16,
+    },
+    "large": {
+        "d_model": 1280,
+        "d_ff": 5120,
+        "num_layers": 36,
+        "num_heads": 20,
+    },
     "xl": {
         "d_model": 1600,
         "d_ff": 6400,
