@@ -13,6 +13,7 @@ import os
 import statistics
 import time
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -87,7 +88,7 @@ def _setup_distributed(rank: int, world_size: int, backend: str, timeout_seconds
     dist.init_process_group(
         backend=backend,
         rank=rank,
-        world_size=world_size,
+        world_siz
         timeout=torch.distributed.timedelta(seconds=timeout_seconds),
     )
 
