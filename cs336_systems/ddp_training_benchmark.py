@@ -27,6 +27,7 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 import torch.nn as nn
 import torch.optim as optim
+import torch.utils.checkpoint as checkpoint
 from cs336_systems.ddp_individual_parameters import DDPIndividualParameters
 
 try:
@@ -91,6 +92,7 @@ def create_model(
     vocab_size: int = DEFAULT_VOCAB_SIZE,
     context_length: int = DEFAULT_CONTEXT_LENGTH,
     device: str = "cuda",
+    activation_checkpointing: bool = False,
 ) -> nn.Module:
     """Create a BasicsTransformerLM model."""
     model = BasicsTransformerLM(
@@ -102,7 +104,22 @@ def create_model(
         num_heads=config["num_heads"],
         rope_theta=10000.0,
     )
-    return model.to(device)
+    model = model.to(device)
+
+    if activation_checkpointing:
+        if not hasattr(model, "layers"):
+            raise ValueError("Activation checkpointing requested, but model has no layers attribute")
+
+        def _checkpointed_forward(x: torch.Tensor) -> torch.Tensor:
+            x = model.token_embeddings(x)
+            for layer in model.layers:
+                x = checkpoint.checkpoint(layer, x, use_reentrant=False)
+            x = model.ln_final(x)
+            return model.lm_head(x)
+
+        model.forward = _checkpointed_forward  # type: ignore[method-assign]
+
+    return model
 
 
 def make_batch(
@@ -130,6 +147,7 @@ def benchmark_ddp_training(
     batch_size: int = DEFAULT_BATCH_SIZE,
     context_length: int = DEFAULT_CONTEXT_LENGTH,
     amp_dtype: str = "float32",
+    activation_checkpointing: bool = False,
     results_file: str = "ddp_benchmark_results.json",
 ):
     """
@@ -147,7 +165,12 @@ def benchmark_ddp_training(
     try:
         # Create model
         config = MODEL_CONFIGS[model_size]
-        model = create_model(config, context_length=context_length, device=device)
+        model = create_model(
+            config,
+            context_length=context_length,
+            device=device,
+            activation_checkpointing=activation_checkpointing,
+        )
 
         if amp_dtype in {"bfloat16", "float16"} and device.startswith("cuda"):
             target_dtype = torch.bfloat16 if amp_dtype == "bfloat16" else torch.float16
@@ -172,6 +195,7 @@ def benchmark_ddp_training(
             logger.info(f"Model config: {config}")
             logger.info(f"Batch size: {batch_size}, Context length: {context_length}")
             logger.info(f"AMP dtype: {amp_dtype}")
+            logger.info(f"Activation checkpointing: {activation_checkpointing}")
             logger.info(f"Warmup steps: {warmup_steps}, Benchmark steps: {num_steps}")
         
         # Training loop
@@ -251,6 +275,7 @@ def benchmark_ddp_training(
                 "batch_size": batch_size,
                 "context_length": context_length,
                 "amp_dtype": amp_dtype,
+                "activation_checkpointing": activation_checkpointing,
                 "model_config": config,
                 "num_benchmark_steps": num_steps,
                 "warmup_steps": warmup_steps,
@@ -393,6 +418,11 @@ def main():
         help="Compute/model dtype. Use bfloat16 or float16 to reduce memory usage.",
     )
     parser.add_argument(
+        "--activation-checkpointing",
+        action="store_true",
+        help="Enable activation checkpointing across Transformer layers to reduce memory usage.",
+    )
+    parser.add_argument(
         "--output",
         type=str,
         default="benchmark_results/ddp_benchmark_results.json",
@@ -422,6 +452,7 @@ def main():
             args.batch_size,
             context_length,
             args.amp_dtype,
+            args.activation_checkpointing,
             args.output,
         ),
         nprocs=args.world_size,
