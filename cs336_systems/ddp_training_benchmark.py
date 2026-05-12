@@ -25,7 +25,6 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 import torch.nn as nn
 import torch.optim as optim
-from torch.nn.parallel import DistributedDataParallel
 
 from cs336_basics.model import BasicsTransformerLM
 from cs336_basics.nn_utils import cross_entropy
@@ -48,27 +47,6 @@ MODEL_CONFIGS = {
 DEFAULT_VOCAB_SIZE = 50257
 DEFAULT_BATCH_SIZE = 8
 DEFAULT_CONTEXT_LENGTH = 256
-
-
-class GradientCommunicationTimer:
-    """Context manager to track time spent in all-reduce operations."""
-
-    def __init__(self):
-        self.comm_time = 0.0
-        self.in_comm = False
-
-    def __enter__(self):
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
-        self.start_time = time.perf_counter()
-        self.in_comm = True
-        return self
-
-    def __exit__(self, *args):
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
-        self.comm_time += time.perf_counter() - self.start_time
-        self.in_comm = False
 
 
 def setup_process_group(rank: int, world_size: int, backend: str = "nccl"):
@@ -158,7 +136,7 @@ def benchmark_ddp_training(
     try:
         # Create model
         config = MODEL_CONFIGS[model_size]
-        model = create_model(config, device=device)
+        model = create_model(config, context_length=context_length, device=device)
         
         # Wrap with naive DDP
         ddp_model = DDPIndividualParameters(model)
@@ -346,10 +324,22 @@ def main():
         help="Number of benchmark steps (after warmup)",
     )
     parser.add_argument(
+        "--rep",
+        type=int,
+        default=None,
+        help="Alias for --num-steps to match other benchmark scripts",
+    )
+    parser.add_argument(
         "--warmup-steps",
         type=int,
         default=5,
         help="Number of warmup steps",
+    )
+    parser.add_argument(
+        "--warmup",
+        type=int,
+        default=None,
+        help="Alias for --warmup-steps to match other benchmark scripts",
     )
     parser.add_argument(
         "--batch-size",
@@ -362,6 +352,12 @@ def main():
         type=int,
         default=DEFAULT_CONTEXT_LENGTH,
         help="Context length for the model",
+    )
+    parser.add_argument(
+        "--max-seq-len",
+        type=int,
+        default=None,
+        help="Alias for --context-length to match other benchmark scripts",
     )
     parser.add_argument(
         "--output",
@@ -377,6 +373,10 @@ def main():
     )
     
     args = parser.parse_args()
+
+    warmup_steps = args.warmup if args.warmup is not None else args.warmup_steps
+    num_steps = args.rep if args.rep is not None else args.num_steps
+    context_length = args.max_seq_len if args.max_seq_len is not None else args.context_length
     
     # Use torch.multiprocessing to spawn processes for each rank
     mp.spawn(
@@ -384,10 +384,10 @@ def main():
         args=(
             args.world_size,
             args.model_size,
-            args.num_steps,
-            args.warmup_steps,
+            num_steps,
+            warmup_steps,
             args.batch_size,
-            args.context_length,
+            context_length,
             args.output,
         ),
         nprocs=args.world_size,
