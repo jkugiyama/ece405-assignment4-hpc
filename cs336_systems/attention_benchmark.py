@@ -12,6 +12,7 @@ Setup:
 
 import itertools
 import timeit
+import argparse
 from logging import INFO, basicConfig, getLogger
 
 import torch
@@ -117,13 +118,82 @@ def benchmark(d_k: int, seq_len: int):
     return avg_fwd_ms, avg_mem_mb, avg_bwd_ms
 
 
+def benchmark_impl(d_k: int, seq_len: int, *, compiled: bool):
+    """Run benchmark with either eager or torch.compile attention implementation."""
+    shape = (BATCH_SIZE, seq_len, d_k)
+    attention_impl = scaled_dot_product_attention
+    if compiled:
+        # fullgraph=False is more robust for custom Python ops and control flow.
+        attention_impl = torch.compile(
+            scaled_dot_product_attention,
+            fullgraph=False,
+            backend="aot_eager",
+        )
+
+    forward_time_sum = 0.0
+    backward_time_sum = 0.0
+    peak_mem_sum = 0.0
+
+    logger.info(
+        "Benchmarking %s attention for d_k=%d seq_len=%d ...",
+        "compiled" if compiled else "eager",
+        d_k,
+        seq_len,
+    )
+
+    for i in range(WARM_UP_STEPS + BENCHMARK_STEPS):
+        is_warmup = i < WARM_UP_STEPS
+
+        Q = torch.randn(shape, device=DEVICE, requires_grad=True)
+        K = torch.randn(shape, device=DEVICE, requires_grad=True)
+        V = torch.randn(shape, device=DEVICE, requires_grad=True)
+
+        if USE_CUDA:
+            torch.cuda.reset_peak_memory_stats(DEVICE)
+
+        t1 = timeit.default_timer()
+        outputs = attention_impl(Q, K, V)
+        sync()
+        t2 = timeit.default_timer()
+
+        peak_mem = torch.cuda.max_memory_allocated(DEVICE) if USE_CUDA else 0
+
+        grad_out = torch.ones_like(outputs)
+        t3 = timeit.default_timer()
+        outputs.backward(grad_out)
+        sync()
+        t4 = timeit.default_timer()
+
+        del Q, K, V, outputs, grad_out
+
+        if is_warmup:
+            continue
+
+        forward_time_sum += t2 - t1
+        backward_time_sum += t4 - t3
+        peak_mem_sum += peak_mem
+
+    avg_fwd_ms = 1e3 * forward_time_sum / BENCHMARK_STEPS
+    avg_bwd_ms = 1e3 * backward_time_sum / BENCHMARK_STEPS
+    avg_mem_mb = (peak_mem_sum / BENCHMARK_STEPS) / (1024 ** 2) if USE_CUDA else float("nan")
+    return avg_fwd_ms, avg_mem_mb, avg_bwd_ms
+
+
 class _nullctx:
     """Minimal no-op context manager (avoids importing contextlib)."""
     def __enter__(self): return self
     def __exit__(self, *_): pass
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Benchmark attention eager vs compiled")
+    parser.add_argument("--d-k", type=int, default=None, help="Optional single d_k value")
+    parser.add_argument("--seq-len", type=int, default=None, help="Optional single seq_len value")
+    return parser.parse_args()
+
+
 def main():
+    args = parse_args()
     logger.info("Device: %s", DEVICE)
     logger.info("Warmup=%d  Benchmark=%d", WARM_UP_STEPS, BENCHMARK_STEPS)
 
@@ -133,35 +203,41 @@ def main():
 
     header = (
         f"{'d_k':>6} {'seq_len':>8} "
-        f"{'fwd (ms)':>12} {'mem_pre_bwd (MB)':>18} {'bwd (ms)':>12} {'theory_mem (MB)':>16}"
+        f"{'mode':>12} {'fwd (ms)':>12} {'mem_pre_bwd (MB)':>18} {'bwd (ms)':>12} {'theory_mem (MB)':>16}"
     )
     sep = "-" * len(header)
     print("\n" + header)
     print(sep)
 
-    for d_k, seq_len in itertools.product(D_K_VALUES, SEQ_LEN_VALUES):
+    grid = itertools.product(D_K_VALUES, SEQ_LEN_VALUES)
+    if args.d_k is not None and args.seq_len is not None:
+        grid = [(args.d_k, args.seq_len)]
+
+    for d_k, seq_len in grid:
         theory_mb = cal_mem(d_k, seq_len)
-        try:
-            fwd_ms, mem_mb, bwd_ms = benchmark(d_k, seq_len)
-            print(
-                f"{d_k:>6} {seq_len:>8} "
-                f"{fwd_ms:>12.3f} {mem_mb:>18.1f} {bwd_ms:>12.3f} {theory_mb:>16.1f}"
-            )
-        except (RuntimeError, torch.cuda.OutOfMemoryError) as e:
-            if "out of memory" in str(e).lower() or isinstance(e, torch.cuda.OutOfMemoryError):
+        for compiled in (False, True):
+            mode = "compiled" if compiled else "eager"
+            try:
+                fwd_ms, mem_mb, bwd_ms = benchmark_impl(d_k, seq_len, compiled=compiled)
                 print(
                     f"{d_k:>6} {seq_len:>8} "
-                    f"{'OOM':>12} {'OOM':>18} {'OOM':>12} {theory_mb:>16.1f}"
+                    f"{mode:>12} {fwd_ms:>12.3f} {mem_mb:>18.1f} {bwd_ms:>12.3f} {theory_mb:>16.1f}"
                 )
-                if USE_CUDA:
-                    torch.cuda.empty_cache()
-            else:
-                print(
-                    f"{d_k:>6} {seq_len:>8} "
-                    f"{'ERR':>12} {'ERR':>18} {'ERR':>12} {theory_mb:>16.1f}  ({e})"
-                )
-                if USE_CUDA:
-                    torch.cuda.empty_cache()
+            except (RuntimeError, torch.cuda.OutOfMemoryError) as e:
+                if "out of memory" in str(e).lower() or isinstance(e, torch.cuda.OutOfMemoryError):
+                    print(
+                        f"{d_k:>6} {seq_len:>8} "
+                        f"{mode:>12} {'OOM':>12} {'OOM':>18} {'OOM':>12} {theory_mb:>16.1f}"
+                    )
+                    if USE_CUDA:
+                        torch.cuda.empty_cache()
+                else:
+                    print(
+                        f"{d_k:>6} {seq_len:>8} "
+                        f"{mode:>12} {'ERR':>12} {'ERR':>18} {'ERR':>12} {theory_mb:>16.1f}  ({e})"
+                    )
+                    if USE_CUDA:
+                        torch.cuda.empty_cache()
 
     print(sep)
 

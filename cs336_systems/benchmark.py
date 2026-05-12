@@ -52,6 +52,7 @@ class BenchmarkConfig:
     run_backward: bool
     device: str
     amp_dtype: torch.dtype | None
+    compile_model: bool
 
 
 def maybe_sync(device: str) -> None:
@@ -90,7 +91,7 @@ def make_batch(
 def run_benchmark(cfg: BenchmarkConfig) -> dict[str, Any]:
     model_cfg = cfg.model
 
-    model = BasicsTransformerLM(
+    model: Any = BasicsTransformerLM(
         vocab_size=cfg.vocab_size,
         context_length=cfg.context_length,
         d_model=model_cfg.d_model,
@@ -99,16 +100,19 @@ def run_benchmark(cfg: BenchmarkConfig) -> dict[str, Any]:
         num_heads=model_cfg.num_heads,
         rope_theta=10000.0,
     ).to(cfg.device)
+    if cfg.compile_model:
+        model = torch.compile(model, fullgraph=False, backend="aot_eager")
     model.train()
 
     optimizer = AdamW(model.parameters())
-    scaler = torch.amp.GradScaler("cuda", enabled=cfg.amp_dtype == torch.float16)
+    scaler = torch.cuda.amp.GradScaler(enabled=cfg.amp_dtype == torch.float16)
 
     device_type = cfg.device.split(":", maxsplit=1)[0]
 
     forward_times: list[float] = []
     backward_times: list[float] = []
     loss_times: list[float] = []
+    total_step_times: list[float] = []
 
     logger.info(
         "Starting benchmark on %s | warmup=%d steps=%d mode=%s amp=%s",
@@ -164,9 +168,11 @@ def run_benchmark(cfg: BenchmarkConfig) -> dict[str, Any]:
         forward_time = t2 - t1
         loss_time = t3 - t2
         backward_time = t4 - t3
+        total_step_time = t4 - t1
 
         forward_times.append(forward_time)
         loss_times.append(loss_time)
+        total_step_times.append(total_step_time)
         if cfg.run_backward:
             backward_times.append(backward_time)
 
@@ -184,10 +190,13 @@ def run_benchmark(cfg: BenchmarkConfig) -> dict[str, Any]:
         "amp_dtype": None if cfg.amp_dtype is None else str(cfg.amp_dtype).replace("torch.", ""),
         "warmup_steps": cfg.warmup_steps,
         "benchmark_steps": cfg.benchmark_steps,
+        "compile_model": cfg.compile_model,
         "forward_mean_sec": statistics.mean(forward_times),
         "forward_std_sec": safe_stdev(forward_times),
         "loss_mean_sec": statistics.mean(loss_times),
         "loss_std_sec": safe_stdev(loss_times),
+        "total_step_mean_sec": statistics.mean(total_step_times),
+        "total_step_std_sec": safe_stdev(total_step_times),
     }
     if cfg.run_backward:
         results["backward_mean_sec"] = statistics.mean(backward_times)
@@ -203,6 +212,8 @@ def run_benchmark(cfg: BenchmarkConfig) -> dict[str, Any]:
     logger.info("Forward Std:  %.6f sec", results["forward_std_sec"])
     logger.info("Loss Mean:    %.6f sec", results["loss_mean_sec"])
     logger.info("Loss Std:     %.6f sec", results["loss_std_sec"])
+    logger.info("Step Mean:    %.6f sec", results["total_step_mean_sec"])
+    logger.info("Step Std:     %.6f sec", results["total_step_std_sec"])
     if cfg.run_backward:
         logger.info("Backward Mean: %.6f sec", results["backward_mean_sec"])
         logger.info("Backward Std:  %.6f sec", results["backward_std_sec"])
@@ -234,7 +245,7 @@ def run_memory_profile(cfg: BenchmarkConfig, output_path: str) -> None:
     model.train()
 
     optimizer = AdamW(model.parameters())
-    scaler = torch.amp.GradScaler("cuda", enabled=cfg.amp_dtype == torch.float16)
+    scaler = torch.cuda.amp.GradScaler(enabled=cfg.amp_dtype == torch.float16)
     device_type = cfg.device.split(":", maxsplit=1)[0]
 
     inputs, targets = make_batch(
@@ -339,6 +350,16 @@ def parse_args() -> argparse.Namespace:
         help="Print machine-readable JSON results.",
     )
     parser.add_argument(
+        "--compile-model",
+        action="store_true",
+        help="Compile the full Transformer model with torch.compile.",
+    )
+    parser.add_argument(
+        "--compare-compile",
+        action="store_true",
+        help="Run eager and compiled benchmarks back-to-back and print a comparison table.",
+    )
+    parser.add_argument(
         "--profile-memory",
         action="store_true",
         help="Run a single step under the PyTorch memory profiler instead of benchmarking.",
@@ -388,10 +409,65 @@ def main() -> None:
         run_backward=args.mode == "fwd-bwd",
         device=args.device,
         amp_dtype=amp_dtype,
+        compile_model=args.compile_model,
     )
 
     if args.profile_memory:
         run_memory_profile(cfg, args.memory_output)
+    elif args.compare_compile:
+        eager_cfg = BenchmarkConfig(
+            model=cfg.model,
+            vocab_size=cfg.vocab_size,
+            batch_size=cfg.batch_size,
+            context_length=cfg.context_length,
+            warmup_steps=cfg.warmup_steps,
+            benchmark_steps=cfg.benchmark_steps,
+            run_backward=cfg.run_backward,
+            device=cfg.device,
+            amp_dtype=cfg.amp_dtype,
+            compile_model=False,
+        )
+        compiled_cfg = BenchmarkConfig(
+            model=cfg.model,
+            vocab_size=cfg.vocab_size,
+            batch_size=cfg.batch_size,
+            context_length=cfg.context_length,
+            warmup_steps=cfg.warmup_steps,
+            benchmark_steps=cfg.benchmark_steps,
+            run_backward=cfg.run_backward,
+            device=cfg.device,
+            amp_dtype=cfg.amp_dtype,
+            compile_model=True,
+        )
+
+        eager_results = run_benchmark(eager_cfg)
+        compiled_results = run_benchmark(compiled_cfg)
+
+        print("\nCompile Comparison")
+        print("metric                eager (ms)   compiled (ms)   speedup")
+        print("-----------------------------------------------------------")
+        eager_fwd_ms = 1e3 * eager_results["forward_mean_sec"]
+        compiled_fwd_ms = 1e3 * compiled_results["forward_mean_sec"]
+        print(
+            f"forward             {eager_fwd_ms:11.3f} {compiled_fwd_ms:14.3f}"
+            f" {eager_fwd_ms / compiled_fwd_ms:8.3f}x"
+        )
+
+        eager_total_ms = 1e3 * eager_results["total_step_mean_sec"]
+        compiled_total_ms = 1e3 * compiled_results["total_step_mean_sec"]
+        print(
+            f"fwd+loss+bwd+opt    {eager_total_ms:11.3f} {compiled_total_ms:14.3f}"
+            f" {eager_total_ms / compiled_total_ms:8.3f}x"
+        )
+
+        if args.json:
+            print(
+                json.dumps(
+                    {"eager": eager_results, "compiled": compiled_results},
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
     else:
         results = run_benchmark(cfg)
         if args.json:
