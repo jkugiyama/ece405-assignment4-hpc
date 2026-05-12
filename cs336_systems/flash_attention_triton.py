@@ -104,7 +104,7 @@ def flash_fwd_kernel(
             k_indices = k_start + tl.arange(0, K_TILE_SIZE)
             # Mask where q_idx < k_idx (future tokens)
             mask = q_indices[:, None] >= k_indices[None, :]
-            S = tl.where(mask, S, tl.full_like(S, float("-inf")))
+            S = tl.where(mask, S, float("-inf"))
 
         # Compute row-wise max for numerical stability
         m_new = tl.max(S, axis=1)
@@ -273,7 +273,7 @@ def flash_bwd_kernel(
             k_start = j * K_TILE_SIZE
             k_indices = k_start + tl.arange(0, K_TILE_SIZE)
             mask = q_indices[:, None] >= k_indices[None, :]
-            S = tl.where(mask, S, tl.full_like(S, float("-inf")))
+            S = tl.where(mask, S, float("-inf"))
 
         P = tl.exp(S - L[:, None])
         dP = tl.dot(dO, tl.trans(V))
