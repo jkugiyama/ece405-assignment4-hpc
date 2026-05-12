@@ -240,8 +240,6 @@ def flash_bwd_kernel(
 
     # First loop: accumulate gradients for dQ
     num_key_tiles = tl.cdiv(N_KEYS, K_TILE_SIZE)
-    dK_accum = tl.zeros((N_KEYS, D), dtype=tl.float32)
-    dV_accum = tl.zeros((N_KEYS, D), dtype=tl.float32)
 
     K_block_ptr_fwd = tl.make_block_ptr(
         K_ptr + batch_index * stride_kb,
@@ -280,8 +278,6 @@ def flash_bwd_kernel(
         dS = P * (dP - O_dO[:, None])
 
         dQ += tl.dot(dS, K) * scale
-        dK_accum_tile = tl.dot(tl.trans(dS), Q) * scale
-        dV_accum_tile = tl.dot(tl.trans(P), dO)
 
         K_block_ptr_fwd = tl.advance(K_block_ptr_fwd, (K_TILE_SIZE, 0))
         V_block_ptr_fwd = tl.advance(V_block_ptr_fwd, (K_TILE_SIZE, 0))
